@@ -103,7 +103,7 @@ Sin disco persistente → mismo truco de backup de sesión en Supabase Storage.
 api_canales/
 ├── index.js                    # entrypoint: arma todo y arranca
 ├── package.json                # deps + postinstall (patch-package)
-├── Dockerfile                  # Node 20 + Chromium del sistema (para Render)
+├── Dockerfile                  # Node 22 + Chromium del sistema (para Render)
 ├── .env.example                # plantilla de variables de entorno
 ├── supabase.sql                # SQL: canales_publicaciones + pipeline_estado + bucket Storage
 ├── patches/

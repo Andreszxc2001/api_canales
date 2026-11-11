@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:22-slim
 
 # Chromium del sistema (puppeteer no descarga el suyo) + fuentes para render.
 ENV NODE_ENV=production \
