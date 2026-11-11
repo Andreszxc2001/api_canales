@@ -10,14 +10,19 @@ import { crearMistral } from './src/ai/mistralService.js';
 import { crearDb } from './src/db/supabase.js';
 import { iniciarPipeline } from './src/pipeline.js';
 import { crearReproceso } from './src/reproceso.js';
+import { crearEvolution } from './src/whatsapp/evolution.js';
 
 const cfg = config();
+
+const evolution = crearEvolution({ cfg });
+const usarEvolution = evolution.disponible();
 
 logger.info('Main', 'Iniciando api_canales', {
   canales: cfg.canales.length,
   intervaloMinutos: cfg.intervaloMinutos,
   puerto: cfg.puerto,
   respaldoSesion: cfg.respaldoSesion,
+  proveedor: usarEvolution ? `evolution:${cfg.evolutionInstancia}` : 'whatsapp-web',
 });
 
 const db = crearDb(cfg);
@@ -25,34 +30,40 @@ const ocr = crearOcr(cfg);
 const mistral = crearMistral(cfg);
 
 const sessionStore = crearSessionStore({ cfg, db });
-if (sessionStore.activo) {
+if (!usarEvolution && sessionStore.activo) {
   await sessionStore.restaurar();
 }
 
 let pipelineRef = { ejecutarAhora: () => {} };
-const whatsapp = new WhatsappService({
-  cfg,
-  onListo: () => {
-    sessionStore
-      .respaldar({ forzar: true })
-      .catch((err) => logger.warn('Sesion', 'Respaldo inicial falló', err?.message));
-    pipelineRef.ejecutarAhora();
-  },
-  onSesionInvalida: () => {
-    sessionStore
-      .limpiarRemoto()
-      .catch((err) => logger.warn('Sesion', 'No se pudo limpiar el respaldo remoto', err?.message));
-  },
-});
+let whatsapp = null;
 
-const pipeline = iniciarPipeline({ cfg, whatsapp, db, ocr, mistral });
+if (!usarEvolution) {
+  whatsapp = new WhatsappService({
+    cfg,
+    onListo: () => {
+      sessionStore
+        .respaldar({ forzar: true })
+        .catch((err) => logger.warn('Sesion', 'Respaldo inicial falló', err?.message));
+      pipelineRef.ejecutarAhora();
+    },
+    onSesionInvalida: () => {
+      sessionStore
+        .limpiarRemoto()
+        .catch((err) => logger.warn('Sesion', 'No se pudo limpiar el respaldo remoto', err?.message));
+    },
+  });
+}
+
+const pipeline = iniciarPipeline({ cfg, whatsapp, evolution, db, ocr, mistral });
 pipelineRef = pipeline;
 
 const reproceso = crearReproceso({ cfg, db, ocr, mistral });
 
-sessionStore.iniciar({ estaConectado: () => whatsapp.conectado() });
+if (!usarEvolution) {
+  sessionStore.iniciar({ estaConectado: () => whatsapp.conectado() });
+}
 
-crearServer({ cfg, whatsapp, pipeline, reproceso });
+crearServer({ cfg, whatsapp, evolution, pipeline, reproceso });
 
 if (cfg.reprocesarAlIniciar && reproceso.disponible()) {
   setTimeout(() => {
@@ -73,7 +84,7 @@ const cerrar = async (senal) => {
     // mejor esfuerzo
   }
   sessionStore.detener();
-  await whatsapp.desconectar().catch(() => {});
+  if (whatsapp) await whatsapp.desconectar().catch(() => {});
   process.exit(0);
 };
 

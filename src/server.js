@@ -33,7 +33,7 @@ ${extraHead}
 </html>`;
 }
 
-export function crearServer({ cfg, whatsapp, pipeline, reproceso }) {
+export function crearServer({ cfg, whatsapp, evolution, pipeline, reproceso }) {
   const app = express();
 
   app.get('/salud', (_req, res) => {
@@ -41,6 +41,18 @@ export function crearServer({ cfg, whatsapp, pipeline, reproceso }) {
   });
 
   app.get('/qr', (_req, res) => {
+    if (!whatsapp) {
+      res.send(
+        paginaHtml(
+          'Sesión gestionada por Evolution API',
+          `<p>Este servicio no usa QR: la sesión de WhatsApp está vinculada en tu Evolution API
+           (instancia <code>${cfg.evolutionInstancia || '?'}</code>).</p>
+           <p>Vincula o revisa la conexión en el panel de tu Evolution API y luego consulta <code>/estado</code>.</p>`
+        )
+      );
+      return;
+    }
+
     if (whatsapp.conectado()) {
       res.send(paginaHtml('WhatsApp conectado', '<p>La sesión ya está activa. Ya puedes cerrar esta página.</p>'));
       return;
@@ -76,16 +88,23 @@ export function crearServer({ cfg, whatsapp, pipeline, reproceso }) {
     );
   });
 
-  app.get('/estado', (_req, res) => {
+  app.get('/estado', async (_req, res) => {
+    const estadoWhatsapp = whatsapp
+      ? {
+          proveedor: 'whatsapp-web',
+          estado: whatsapp.estado,
+          perfil: whatsapp.obtenerPerfil(),
+          conectadoDesde: whatsapp.conectadoEn,
+          ultimoError: whatsapp.ultimoError,
+          codigoVinculacion: whatsapp.codigoVinculacion || null,
+        }
+      : evolution
+        ? await evolution.estado()
+        : { proveedor: null };
+
     res.json({
       ok: true,
-      whatsapp: {
-        estado: whatsapp.estado,
-        perfil: whatsapp.obtenerPerfil(),
-        conectadoDesde: whatsapp.conectadoEn,
-        ultimoError: whatsapp.ultimoError,
-        codigoVinculacion: whatsapp.codigoVinculacion || null,
-      },
+      whatsapp: estadoWhatsapp,
       pipeline: pipeline.estado(),
       reproceso: reproceso ? reproceso.estado() : null,
       intervaloMinutos: cfg.intervaloMinutos,

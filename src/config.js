@@ -50,7 +50,15 @@ export function config() {
     esperaListoSegundos: Math.min(300, Math.max(10, numero(process.env.ESPERA_LISTO_SEGUNDOS, 45))),
     navegadorTimeoutSegundos: Math.min(600, Math.max(30, numero(process.env.NAVEGADOR_TIMEOUT_SEGUNDOS, 120))),
     whatsappTelefono: String(process.env.WHATSAPP_TELEFONO || '').replace(/\D/g, ''),
+
+    evolutionUrl: String(process.env.EVOLUTION_URL || '').replace(/\/+$/, ''),
+    evolutionApiKey: String(process.env.EVOLUTION_APIKEY || ''),
+    evolutionInstancia: String(process.env.EVOLUTION_INSTANCIA || ''),
   };
+
+  if (cfg.evolutionUrl) {
+    logger.info('Config', 'EVOLUTION_URL definida: se usa Evolution API (sin Chromium ni QR en este servicio)');
+  }
 
   if (!cfg.canales.length) {
     logger.info('Config', 'CANALES vacío: modo AUTOMÁTICO (se monitorean todos los canales suscritos)');

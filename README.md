@@ -247,7 +247,33 @@ NAVEGADOR_TIMEOUT_SEGUNDOS=120   # timeout de arranque de Chromium (Render free 
    Con `?todo=1` regenera también las que ya tienen texto. Se ejecuta solo al iniciar
    (`REPROCESAR_AL_INICIAR=true`) hasta `REPROCESO_LOTE` filas por corrida.
 
-## 10. Cómo desplegarlo en Render (paso a paso)
+## 10. Modo Evolution API (sin Chromium)
+
+Si ya tienes [Evolution API](https://github.com/EvolutionAPI/evolution-api) desplegado y con el
+WhatsApp vinculado, `api_canales` puede usar esa sesión en lugar de su propio Chromium
+(menos RAM, sin QR ni backups de sesión). Define:
+
+```env
+EVOLUTION_URL=https://tu-evolution.onrender.com
+EVOLUTION_APIKEY=tu_api_key
+EVOLUTION_INSTANCIA=nombre_de_la_instancia
+```
+
+Cuando `EVOLUTION_URL` está definida, el servicio **no arranca Chromium**: lee los canales
+con `POST /chat/findChats` (filtra JIDs `@newsletter`), trae los mensajes nuevos con
+`POST /chat/findMessages` y baja cada imagen con `POST /chat/getBase64FromMediaMessage`.
+Si `CANALES` está vacío se monitorean todos los canales que siga la cuenta; también puedes
+poner JIDs (`1234567890@newsletter`) o nombres de canal en `CANALES`.
+
+Requisito en Evolution: que **no ignore los canales**. En su `.env`:
+
+```env
+IGNORE_NEWSLETTERS=false
+```
+
+y redeploy. Sin eso, Evolution descarta los mensajes `@newsletter` y no habrá nada que leer.
+
+## 11. Cómo desplegarlo en Render (paso a paso)
 
 1. **Supabase**: crea el proyecto, abre el SQL Editor y ejecuta `supabase.sql`.
    Guarda la URL del proyecto y la `service_role` key (Settings → API).
@@ -276,7 +302,7 @@ NAVEGADOR_TIMEOUT_SEGUNDOS=120   # timeout de arranque de Chromium (Render free 
 Endpoints: `/qr` (vincular sesión), `/estado` (diagnóstico), `/salud` (keep-alive).
 Estados de fila: `procesada`, `sin_texto`, `sin_ia` (falta API key), `error` (fallo Mistral).
 
-## 11. Resumen de viabilidad
+## 12. Resumen de viabilidad
 
 - **Sin interfaz: VIABLE** — whatsapp-web.js es headless de fábrica; solo se necesita
   escanear el QR una vez. No hace falta Electron ni UI web.

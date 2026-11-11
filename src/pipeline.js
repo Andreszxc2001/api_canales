@@ -36,13 +36,27 @@ function dormir(ms) {
 }
 
 /**
+ * Normaliza un mensaje de whatsapp-web.js a la misma forma que usa Evolution.
+ */
+function adaptarWweb(msg) {
+  return {
+    id: idDeMensaje(msg) || `${msg.timestamp}-${msg.body}`,
+    timestamp: Number(msg.timestamp) || 0,
+    body: typeof msg.body === 'string' ? msg.body : '',
+    tipo: tipoNormalizado(msg),
+    descargarMedia: () => descargarMultimedia(msg),
+  };
+}
+
+/**
  * Procesa una publicación: descarga imagen -> Storage -> OCR -> Mistral -> fila para la DB.
  */
-async function procesarPublicacion(msg, { canalId, nombre, tipo }, { cfg, db, ocr, mistral }) {
-  const mensajeId = idDeMensaje(msg) || `${canalId}-${msg.timestamp}`;
-  const ts = Number(msg.timestamp) || Math.floor(Date.now() / 1000);
+async function procesarPublicacion(pub, { canalId, nombre }, { cfg, db, ocr, mistral }) {
+  const mensajeId = pub.id || `${canalId}-${pub.timestamp}`;
+  const ts = Number(pub.timestamp) || Math.floor(Date.now() / 1000);
   const { fecha, hora, datetime } = fechaHoraDesdeTimestamp(ts);
-  const body = typeof msg.body === 'string' ? msg.body.trim() : '';
+  const body = typeof pub.body === 'string' ? pub.body.trim() : '';
+  const tipo = pub.tipo;
 
   const row = {
     mensaje_id: mensajeId,
@@ -60,7 +74,7 @@ async function procesarPublicacion(msg, { canalId, nombre, tipo }, { cfg, db, oc
   };
 
   if (tipo === 'imagen') {
-    const media = await descargarMultimedia(msg);
+    const media = await pub.descargarMedia();
     if (media?.buffer?.length) {
       // Se sube en WebP para ahorrar espacio; el OCR usa la imagen original.
       let paraGuardar = media;
@@ -115,10 +129,11 @@ async function procesarPublicacion(msg, { canalId, nombre, tipo }, { cfg, db, oc
 /**
  * Orquestador: cada INTERVALO_MINUTOS consulta los canales y procesa lo nuevo.
  */
-export function iniciarPipeline({ cfg, whatsapp, db, ocr, mistral }) {
+export function iniciarPipeline({ cfg, whatsapp, evolution, db, ocr, mistral }) {
   let corriendo = false;
   let ultimoCiclo = null;
   const canalesVistos = new Set();
+  const usarEvolution = Boolean(evolution?.disponible());
 
   /**
    * Canales a monitorear:
@@ -128,6 +143,16 @@ export function iniciarPipeline({ cfg, whatsapp, db, ocr, mistral }) {
    */
   async function obtenerCanales() {
     if (cfg.canales.length) return cfg.canales;
+
+    if (usarEvolution) {
+      const descubiertos = await evolution.listarCanales();
+      for (const c of descubiertos) {
+        if (canalesVistos.has(c.clave)) continue;
+        logger.info('Pipeline', `Canal detectado (Evolution): "${c.nombre || c.clave}"`);
+        canalesVistos.add(c.clave);
+      }
+      return descubiertos.map((c) => c.clave);
+    }
 
     const descubiertos = await listarCanales(whatsapp.client);
     const ids = descubiertos.map((c) => c.id).filter(Boolean);
@@ -142,19 +167,35 @@ export function iniciarPipeline({ cfg, whatsapp, db, ocr, mistral }) {
     return ids;
   }
 
-  async function ejecutarCiclo() {
-    if (corriendo) {
-      logger.debug('Pipeline', 'Ciclo anterior aún en curso, se omite');
-      return;
+  async function conectado() {
+    if (usarEvolution) {
+      const estado = await evolution.estado();
+      if (!estado.ok) {
+        logger.info('Pipeline', 'Evolution API sin conexión o instancia cerrada', estado);
+      }
+      return estado.ok;
     }
 
     if (!whatsapp.conectado()) {
       await whatsapp.conectar();
       if (!whatsapp.conectado()) {
         logger.info('Pipeline', 'WhatsApp sin conexión todavía (QR pendiente en /qr)');
-        ultimoCiclo = { fecha: new Date().toISOString(), ok: false, motivo: 'whatsapp_sin_conexion' };
-        return;
+        return false;
       }
+    }
+
+    return true;
+  }
+
+  async function ejecutarCiclo() {
+    if (corriendo) {
+      logger.debug('Pipeline', 'Ciclo anterior aún en curso, se omite');
+      return;
+    }
+
+    if (!(await conectado())) {
+      ultimoCiclo = { fecha: new Date().toISOString(), ok: false, motivo: 'whatsapp_sin_conexion' };
+      return;
     }
 
     corriendo = true;
@@ -179,21 +220,32 @@ export function iniciarPipeline({ cfg, whatsapp, db, ocr, mistral }) {
         }
 
         try {
-          const { canalId, nombre, publicaciones } = await publicacionesNuevas({
-            client: whatsapp.client,
-            canalInput,
-            desdeTs,
-            limite: cfg.limiteMensajes,
-          });
+          const resultado = usarEvolution
+            ? await evolution.publicacionesNuevas({
+                canalInput,
+                desdeTs,
+                limite: cfg.limiteMensajes,
+              })
+            : await publicacionesNuevas({
+                client: whatsapp.client,
+                canalInput,
+                desdeTs,
+                limite: cfg.limiteMensajes,
+              });
 
-          for (const msg of publicaciones) {
-            const tipo = tipoNormalizado(msg);
-            if (!['imagen', 'texto'].includes(tipo)) continue;
+          const { canalId, nombre } = resultado;
+          const publicaciones = usarEvolution
+            ? resultado.publicaciones
+            : resultado.publicaciones.map(adaptarWweb);
+
+          for (const pub of publicaciones) {
+            if (!['imagen', 'texto'].includes(pub.tipo)) continue;
+            if (!(Number(pub.timestamp) > Number(desdeTs))) continue;
 
             nuevas += 1;
 
             try {
-              const row = await procesarPublicacion(msg, { canalId, nombre, tipo }, { cfg, db, ocr, mistral });
+              const row = await procesarPublicacion(pub, { canalId, nombre }, { cfg, db, ocr, mistral });
               await db.upsertPublicacion(row);
               procesadas += 1;
               if (row.estado === 'error') errores += 1;
@@ -208,7 +260,7 @@ export function iniciarPipeline({ cfg, whatsapp, db, ocr, mistral }) {
               logger.error('Pipeline', 'Fallo procesando una publicación', err?.message);
             }
 
-            const ts = Number(msg.timestamp) || 0;
+            const ts = Number(pub.timestamp) || 0;
             if (ts > desdeTs) desdeTs = ts;
 
             if (cfg.pausaPublicacionesMs > 0) await dormir(cfg.pausaPublicacionesMs);
@@ -259,7 +311,9 @@ export function iniciarPipeline({ cfg, whatsapp, db, ocr, mistral }) {
 
   logger.info(
     'Pipeline',
-    `Iniciado: ciclo cada ${cfg.intervaloMinutos} min, ${
+    `Iniciado: ciclo cada ${cfg.intervaloMinutos} min, proveedor ${
+      usarEvolution ? `Evolution API (${cfg.evolutionInstancia})` : 'WhatsApp Web (Chromium)'
+    }, ${
       cfg.canales.length ? `modo filtro (${cfg.canales.length} canal(es) fijos)` : 'modo AUTOMÁTICO (todos los canales suscritos)'
     }`
   );
