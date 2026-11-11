@@ -1,0 +1,141 @@
+diff --git a/node_modules/whatsapp-web.js/src/structures/Chat.js b/node_modules/whatsapp-web.js/src/structures/Chat.js
+index 40211bf..ef766b8 100644
+--- a/node_modules/whatsapp-web.js/src/structures/Chat.js
++++ b/node_modules/whatsapp-web.js/src/structures/Chat.js
+@@ -201,6 +201,7 @@ class Chat extends Base {
+      * @returns {Promise<Array<Message>>}
+      */
+     async fetchMessages(searchOptions) {
++        const chatIdSerializado = this.id?._serialized ?? this.id?.$1 ?? this.id?.id;
+         let messages = await this.client.pupPage.evaluate(
+             async (chatId, searchOptions) => {
+                 const msgFilter = (m) => {
+@@ -239,7 +240,7 @@ class Chat extends Base {
+ 
+                 return msgs.map((m) => window.WWebJS.getMessageModel(m));
+             },
+-            this.id._serialized,
++            chatIdSerializado,
+             searchOptions,
+         );
+ 
+diff --git a/node_modules/whatsapp-web.js/src/structures/Message.js b/node_modules/whatsapp-web.js/src/structures/Message.js
+index dd977e8..70c626c 100644
+--- a/node_modules/whatsapp-web.js/src/structures/Message.js
++++ b/node_modules/whatsapp-web.js/src/structures/Message.js
+@@ -36,6 +36,11 @@ class Message extends Base {
+          */
+         this.id = data.id;
+ 
++        // Compatibilidad: WhatsApp Web renombró `_serialized` a `$1`.
++        if (this.id && this.id._serialized === undefined && this.id.$1 !== undefined) {
++            this.id._serialized = this.id.$1;
++        }
++
+         /**
+          * ACK status for the message
+          * @type {MessageAck}
+@@ -566,6 +571,7 @@ class Message extends Base {
+                         mediaKey: msg.mediaKey,
+                         mediaKeyTimestamp: msg.mediaKeyTimestamp,
+                         type: msg.type,
++                        mimetype: msg.mimetype,
+                         signal: new AbortController().signal,
+                         downloadQpl: mockQpl,
+                     });
+diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
+index 540078a..8025a0a 100644
+--- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
++++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
+@@ -830,7 +830,7 @@ exports.LoadUtils = () => {
+ 
+         if (typeof msg.id.remote === 'object') {
+             msg.id = Object.assign({}, msg.id, {
+-                remote: msg.id.remote._serialized,
++                remote: msg.id.remote._serialized ?? msg.id.remote.$1,
+             });
+         }
+ 
+@@ -919,10 +919,16 @@ exports.LoadUtils = () => {
+ 
+     window.WWebJS.getChats = async () => {
+         const chats = window.require('WAWebCollections').Chat.getModelsArray();
+-        const chatPromises = chats.map((chat) =>
+-            window.WWebJS.getChatModel(chat),
+-        );
+-        return await Promise.all(chatPromises);
++        const resultados = [];
++        for (const chat of chats) {
++            try {
++                const modelo = await window.WWebJS.getChatModel(chat);
++                if (modelo) resultados.push(modelo);
++            } catch {
++                // Un chat que falla al serializarse no debe romper toda la lista.
++            }
++        }
++        return resultados;
+     };
+ 
+     window.WWebJS.getChannels = async () => {
+@@ -932,7 +938,21 @@ exports.LoadUtils = () => {
+         const channelPromises = channels?.map((channel) =>
+             window.WWebJS.getChatModel(channel, { isChannel: true }),
+         );
+-        return await Promise.all(channelPromises);
++        const resultados = [];
++        for (const promesa of channelPromises || []) {
++            try {
++                const modelo = await promesa;
++                if (modelo) resultados.push(modelo);
++            } catch {
++                // ignorar canales que fallen aisladamente
++            }
++        }
++        return resultados;
++    };
++
++    const getSerializedId = (obj) => {
++        if (!obj) return undefined;
++        return obj._serialized ?? obj.$1;
+     };
+ 
+     window.WWebJS.getChatModel = async (chat, { isChannel = false } = {}) => {
+@@ -953,11 +973,15 @@ exports.LoadUtils = () => {
+             model.isGroup = true;
+             const chatWid = window
+                 .require('WAWebWidFactory')
+-                .createWid(chat.id._serialized);
++                .createWid(getSerializedId(chat.id));
+             const groupMetadata =
+                 window.require('WAWebCollections').GroupMetadata ||
+                 window.require('WAWebCollections').WAWebGroupMetadataCollection;
+-            await groupMetadata.update(chatWid);
++            try {
++                await groupMetadata.update(chatWid);
++            } catch {
++                // La metadata del grupo puede no estar en IndexedDB; no romper.
++            }
+             const { toPn } = window.require('WAWebLidMigrationUtils');
+             const serializedMetadata = chat.groupMetadata.serialize();
+             for (const p of serializedMetadata.participants || []) {
+@@ -981,16 +1005,15 @@ exports.LoadUtils = () => {
+ 
+         model.lastMessage = null;
+         if (model.msgs && model.msgs.length) {
+-            const lastMessage = chat.lastReceivedKey
++            const lastKey = getSerializedId(chat.lastReceivedKey);
++            const lastMessage = chat.lastReceivedKey && lastKey
+                 ? window
+                       .require('WAWebCollections')
+-                      .Msg.get(chat.lastReceivedKey._serialized) ||
++                      .Msg.get(lastKey) ||
+                   (
+                       await window
+                           .require('WAWebCollections')
+-                          .Msg.getMessagesById([
+-                              chat.lastReceivedKey._serialized,
+-                          ])
++                          .Msg.getMessagesById([lastKey])
+                   )?.messages?.[0]
+                 : null;
+             lastMessage &&
