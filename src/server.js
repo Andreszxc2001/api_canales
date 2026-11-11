@@ -19,6 +19,9 @@ ${extraHead}
   h1 { font-size: 20px; margin-top: 0; }
   p { color: #aaa; font-size: 14px; line-height: 1.5; }
   code { background: #111b21; padding: 2px 6px; border-radius: 4px; }
+  .codigo { font-size: 30px; letter-spacing: 4px; font-weight: 700; color: #25d366;
+            background: #111b21; padding: 12px; border-radius: 8px; margin: 16px 0; }
+  .sep { border-top: 1px solid #2a3942; margin: 20px 0; }
 </style>
 </head>
 <body>
@@ -43,12 +46,21 @@ export function crearServer({ cfg, whatsapp, pipeline, reproceso }) {
       return;
     }
 
+    const codigo = whatsapp.codigoVinculacion;
+    const bloqueCodigo = codigo
+      ? `<p><b>Opción 1: código de vinculación</b></p>
+         <div class="codigo">${codigo}</div>
+         <p>WhatsApp &rarr; <b>Ajustes &rarr; Dispositivos vinculados &rarr; Vincular dispositivo &rarr; Vincular con número de teléfono</b> e ingresa ese código.</p>
+         <div class="sep"></div>
+         <p>Opción 2: escanea el QR de abajo.</p>`
+      : '';
+
     const qr = whatsapp.qrDataUrl;
     if (!qr) {
       res.send(
         paginaHtml(
           'Generando QR...',
-          '<p>El código todavía no está disponible. Esta página se refresca sola cada 5 segundos.</p>'
+          `${bloqueCodigo}<p>El código todavía no está disponible. Esta página se refresca sola cada 5 segundos.</p>`
         )
       );
       return;
@@ -56,8 +68,10 @@ export function crearServer({ cfg, whatsapp, pipeline, reproceso }) {
 
     res.send(
       paginaHtml(
-        'Escanea el QR',
-        `<img src="${qr}" alt="QR de WhatsApp"><p>Abre WhatsApp en tu celular &rarr; <b>Ajustes &rarr; Dispositivos vinculados &rarr; Vincular dispositivo</b> y escanea este código.<br>La página se actualiza sola si el QR expira.</p>`
+        'Vincula tu WhatsApp',
+        `${bloqueCodigo}
+         <img src="${qr}" alt="QR de WhatsApp">
+         <p>QR: WhatsApp &rarr; <b>Ajustes &rarr; Dispositivos vinculados &rarr; Vincular dispositivo</b> y escanea.<br>La página se actualiza sola si el QR o el código expiran.</p>`
       )
     );
   });
@@ -70,6 +84,7 @@ export function crearServer({ cfg, whatsapp, pipeline, reproceso }) {
         perfil: whatsapp.obtenerPerfil(),
         conectadoDesde: whatsapp.conectadoEn,
         ultimoError: whatsapp.ultimoError,
+        codigoVinculacion: whatsapp.codigoVinculacion || null,
       },
       pipeline: pipeline.estado(),
       reproceso: reproceso ? reproceso.estado() : null,

@@ -48,6 +48,8 @@ export function config() {
     convertirWebp: String(process.env.CONVERTIR_WEBP || 'true').toLowerCase() !== 'false',
     webpCalidad: Math.min(100, Math.max(10, numero(process.env.WEBP_CALIDAD, 80))),
     esperaListoSegundos: Math.min(300, Math.max(10, numero(process.env.ESPERA_LISTO_SEGUNDOS, 45))),
+    navegadorTimeoutSegundos: Math.min(600, Math.max(30, numero(process.env.NAVEGADOR_TIMEOUT_SEGUNDOS, 120))),
+    whatsappTelefono: String(process.env.WHATSAPP_TELEFONO || '').replace(/\D/g, ''),
   };
 
   if (!cfg.canales.length) {

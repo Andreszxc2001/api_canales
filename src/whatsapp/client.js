@@ -38,6 +38,8 @@ export class WhatsappService {
     this._intentosListo = 0;
     this._verificador = null;
     this._reconectarTimer = null;
+    this.codigoVinculacion = null;
+    this._ultimoPairing = 0;
   }
 
   _cambiarEstado(estado) {
@@ -57,6 +59,33 @@ export class WhatsappService {
       } catch {
         // no existía
       }
+    }
+  }
+
+  /**
+   * Pide un código de vinculación (8 dígitos) para no depender del QR.
+   * Solo si WHATSAPP_TELEFONO está configurado (formato internacional, sin +).
+   */
+  async _solicitarCodigo(cliente) {
+    const telefono = this.cfg.whatsappTelefono;
+    if (!telefono) return;
+    if (typeof cliente.requestPairingCode !== 'function') {
+      logger.warn('Whatsapp', 'Esta versión de whatsapp-web.js no soporta código de vinculación');
+      return;
+    }
+    if (Date.now() - this._ultimoPairing < 20000) return;
+    this._ultimoPairing = Date.now();
+
+    try {
+      const codigo = await cliente.requestPairingCode(telefono);
+      this.codigoVinculacion = codigo;
+      logger.info(
+        'Whatsapp',
+        `Código de vinculación: ${codigo} (WhatsApp > Dispositivos vinculados > Vincular con número de teléfono)`
+      );
+      console.log(`\n>>> CÓDIGO DE VINCULACIÓN: ${codigo}\n>>> WhatsApp > Dispositivos vinculados > Vincular con número de teléfono\n`);
+    } catch (err) {
+      logger.warn('Whatsapp', 'No se pudo obtener el código de vinculación', err?.message);
     }
   }
 
@@ -141,6 +170,7 @@ export class WhatsappService {
   _marcarConectado(cliente) {
     this._limpiarVerificador();
     this.qrDataUrl = null;
+    this.codigoVinculacion = null;
     this.ultimoError = null;
     this.conectadoEn = new Date().toISOString();
     this._intentosListo = 0;
@@ -190,6 +220,8 @@ export class WhatsappService {
 
     const puppeteer = {
       headless: true,
+      timeout: Math.max(30, Number(this.cfg.navegadorTimeoutSegundos) || 120) * 1000,
+      protocolTimeout: Math.max(60, Number(this.cfg.navegadorTimeoutSegundos) || 120) * 2000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -276,6 +308,10 @@ export class WhatsappService {
         } catch (err) {
           logger.warn('Whatsapp', 'No se pudo generar el QR', err?.message);
         }
+
+        if (this.cfg.whatsappTelefono) {
+          await this._solicitarCodigo(cliente);
+        }
       })
     );
 
@@ -325,6 +361,7 @@ export class WhatsappService {
   _manejarCaida(motivo) {
     this._limpiarVerificador();
     this.qrDataUrl = null;
+    this.codigoVinculacion = null;
     this.ultimoError = String(motivo);
     if (this.estado !== ESTADOS.DESCONECTANDO) {
       const cliente = this.client;

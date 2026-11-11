@@ -223,6 +223,8 @@ LIMITE_MENSAJES=50              # tope de fetchMessages por ciclo (solo publicac
 PAUSA_PUBLICACIONES_MS=1500      # pausa entre publicaciones (plan free de Mistral: ~1 req/s)
 TZ=America/Bogota
 PUERTO=3000                      # solo para /qr, /estado, /salud
+WHATSAPP_TELEFONO=               # opcional: vincular con código de 8 dígitos en vez de QR (solo dígitos, con país)
+NAVEGADOR_TIMEOUT_SEGUNDOS=120   # timeout de arranque de Chromium (Render free es lento)
 ```
 
 ## 9. Ciclo de operación (pipeline cada 2 minutos)
@@ -258,8 +260,13 @@ PUERTO=3000                      # solo para /qr, /estado, /salud
 5. Agrega las variables de entorno (ver `.env.example`):
    `MISTRAL_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET`,
    `CANALES` (vacío = todos los canales), `INTERVALO_MINUTOS=2`, `PAUSA_PUBLICACIONES_MS=1500`.
-6. Deploy. Abre `https://tu-servicio.onrender.com/qr` **desde el celular** con el
-   WhatsApp secundario y escanea (Ajustes → Dispositivos vinculados → Vincular dispositivo).
+6. Deploy. Vincula la sesión:
+   - **Con código (recomendado)**: define `WHATSAPP_TELEFONO` con el número del
+     WhatsApp secundario (solo dígitos, con código de país) y abre `/qr`: muestra un
+     código de 8 dígitos. En el celular: WhatsApp → Dispositivos vinculados →
+     **Vincular con número de teléfono** → ingresa el código.
+   - **Con QR**: abre `https://tu-servicio.onrender.com/qr` **desde el celular** y
+     escanea (Ajustes → Dispositivos vinculados → Vincular dispositivo).
 7. **Keep-alive**: en https://uptimerobot.com (gratis) crea un monitor HTTP que
    haga `GET https://tu-servicio.onrender.com/salud` cada 10 min (evita que Render lo duerma).
 8. Verifica en Supabase: `select * from canales_publicaciones order by created_at desc;`
