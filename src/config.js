@@ -27,6 +27,7 @@ export function config() {
     limiteMensajes: Math.max(1, numero(process.env.LIMITE_MENSAJES, 50)),
     primerasHoras: Math.max(0, numero(process.env.PRIMERAS_HORAS, 24)),
     ocrIdioma: String(process.env.OCR_IDIOMA || 'spa'),
+    ocrIdleMinutos: Math.max(1, numero(process.env.OCR_IDLE_MINUTOS, 10)),
 
     mistralApiKey: String(process.env.MISTRAL_API_KEY || ''),
     mistralUrl: String(process.env.MISTRAL_URL || 'https://api.mistral.ai/v1/chat/completions'),

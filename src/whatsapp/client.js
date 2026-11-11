@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs';
 
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
@@ -41,6 +42,22 @@ export class WhatsappService {
 
   _cambiarEstado(estado) {
     this.estado = estado;
+  }
+
+  /**
+   * Chromium deja Singleton* si lo matan sin cerrar (p. ej. OOM en Render).
+   * Con el lock viejo, todo relaunch falla con "The browser is already running".
+   */
+  async _limpiarLocksSesion() {
+    const dir = path.join(this.cfg.dataDir, 'whatsapp-session', 'session');
+    for (const nombre of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+      try {
+        await fs.promises.unlink(path.join(dir, nombre));
+        logger.warn('Whatsapp', `Se eliminó un lock viejo de sesión (${nombre})`);
+      } catch {
+        // no existía
+      }
+    }
   }
 
   _limpiarVerificador() {
@@ -166,8 +183,10 @@ export class WhatsappService {
     }
   }
 
-  _conectar() {
+  async _conectar() {
     this._iniciando = true;
+
+    await this._limpiarLocksSesion();
 
     const puppeteer = {
       headless: true,
@@ -203,12 +222,25 @@ export class WhatsappService {
 
     return cliente.initialize().then(
       () => ({ ok: true, estado: this.estado }),
-      (err) => {
+      async (err) => {
         logger.error('Whatsapp', 'Error al inicializar el cliente', err?.message);
         this._limpiarVerificador();
+
         if (this.client === cliente) this.client = null;
         this.ultimoError = String(err?.message || err);
         this._cambiarEstado(ESTADOS.ERROR);
+
+        // Cerrar el navegador que pudo haber quedado abierto (si no, el próximo
+        // intento falla con "The browser is already running").
+        if (typeof cliente.destroy === 'function') {
+          try {
+            await cliente.destroy();
+          } catch {
+            // ignorar
+          }
+        }
+        await this._limpiarLocksSesion();
+
         return { ok: false, error: this.ultimoError };
       }
     );
@@ -295,8 +327,12 @@ export class WhatsappService {
     this.qrDataUrl = null;
     this.ultimoError = String(motivo);
     if (this.estado !== ESTADOS.DESCONECTANDO) {
+      const cliente = this.client;
       this.client = null;
       this._cambiarEstado(ESTADOS.DESCONECTADO);
+      if (cliente && typeof cliente.destroy === 'function') {
+        Promise.resolve(cliente.destroy()).catch(() => {});
+      }
     }
     this._agendarReconexion();
   }

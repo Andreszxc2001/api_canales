@@ -5,10 +5,22 @@ import { logger } from '../logger.js';
 /**
  * OCR con tesseract.js (gratis, corre dentro del proceso).
  * Descarga los datos del idioma la primera vez y los cachea en tmp.
+ * El worker se apaga solo tras unos minutos sin uso para liberar RAM.
  */
 export function crearOcr(cfg) {
   let worker = null;
   let creando = null;
+  let enUso = 0;
+  let idleTimer = null;
+  const idleMs = Math.max(1, Number(cfg.ocrIdleMinutos) || 10) * 60_000;
+
+  function agendarApagado() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleTimer = null;
+      if (enUso === 0) terminar();
+    }, idleMs);
+  }
 
   async function obtenerWorker() {
     if (worker) return worker;
@@ -29,6 +41,7 @@ export function crearOcr(cfg) {
   }
 
   async function reconocer(buffer) {
+    enUso += 1;
     try {
       const w = await obtenerWorker();
       const { data } = await w.recognize(buffer);
@@ -42,12 +55,22 @@ export function crearOcr(cfg) {
       }
       worker = null;
       return '';
+    } finally {
+      enUso -= 1;
+      if (enUso === 0) agendarApagado();
     }
   }
 
   async function terminar() {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
     try {
-      await worker?.terminate();
+      if (worker) {
+        await worker.terminate();
+        logger.info('OCR', 'Worker tesseract liberado (inactivo)');
+      }
     } catch {
       // ignorar
     }
