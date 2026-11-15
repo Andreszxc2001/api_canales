@@ -66,6 +66,16 @@ export function crearSessionStore({ cfg, db }) {
   async function restaurar() {
     if (!activo) return false;
 
+    try {
+      const locales = await fs.promises.readdir(dirSesion);
+      if (locales.length) {
+        logger.info('Sesion', 'Ya hay sesión local: se omite la restauración desde Supabase');
+        return true;
+      }
+    } catch {
+      // sin carpeta local: continuar con la restauración remota
+    }
+
     const listado = await db.storageListar(PREFIJO);
     if (!listado.ok) {
       logger.warn('Sesion', 'No se pudo leer el respaldo de la sesión', listado.error);
@@ -80,14 +90,17 @@ export function crearSessionStore({ cfg, db }) {
 
     let restaurados = 0;
     let fallidos = 0;
+    let procesados = 0;
+    const pendientes = nombres.filter((nombre) => nombre !== MARCADOR);
 
-    for (const nombre of nombres) {
-      if (nombre === MARCADOR) continue;
+    logger.info('Sesion', `Restaurando sesión desde Supabase (${pendientes.length} archivos)`);
+
+    await enLotes(pendientes, CONCURRENCIA * 2, async (nombre) => {
       const ruta = `${PREFIJO}/${nombre}`;
       const descarga = await db.storageDescargar(ruta);
       if (!descarga.ok) {
         fallidos += 1;
-        continue;
+        return;
       }
 
       const rel = decodificar(nombre);
@@ -100,7 +113,12 @@ export function crearSessionStore({ cfg, db }) {
         fallidos += 1;
         logger.warn('Sesion', `No se pudo escribir ${rel}`, err?.message);
       }
-    }
+
+      procesados += 1;
+      if (procesados % 50 === 0) {
+        logger.info('Sesion', `Restaurando sesión... ${procesados}/${pendientes.length}`);
+      }
+    });
 
     logger.info('Sesion', `Sesión restaurada desde Supabase (${restaurados} archivos)`, { fallidos });
     return restaurados > 0;
