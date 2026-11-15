@@ -12,15 +12,40 @@ function dormir(ms) {
 
 const MAX_REINTENTOS = 4;
 
+function crearCola(cfg) {
+  const intervaloMs = Math.max(0, Number(cfg.pausaMistralMs) || 0);
+  let cola = Promise.resolve();
+  let ultima = 0;
+
+  return function enCola(tarea) {
+    const turno = cola.then(async () => {
+      const espera = intervaloMs - (Date.now() - ultima);
+      if (espera > 0) await dormir(espera);
+      try {
+        return await tarea();
+      } finally {
+        ultima = Date.now();
+      }
+    });
+    cola = turno.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turno;
+  };
+}
+
 /**
  * Cliente de Mistral chat/completions (portado de app_avitar).
  */
 export function crearMistral(cfg) {
+  const enCola = crearCola(cfg);
+
   function disponible() {
     return Boolean(cfg.mistralApiKey && cfg.mistralUrl);
   }
 
-  async function generar(textoEntrada) {
+  async function generarDirecto(textoEntrada) {
     if (!cfg.mistralApiKey) {
       throw new Error('Falta MISTRAL_API_KEY en las variables de entorno.');
     }
@@ -38,8 +63,8 @@ export function crearMistral(cfg) {
       max_tokens: cfg.mistralMaxTokens,
     };
 
-    const controlador = new AbortController();
-    const temporizador = setTimeout(() => controlador.abort(), cfg.mistralTimeoutMs);
+    let controlador = new AbortController();
+    let temporizador = setTimeout(() => controlador.abort(), cfg.mistralTimeoutMs);
 
     let respuesta;
     try {
@@ -90,6 +115,9 @@ export function crearMistral(cfg) {
         await dormir(espera);
 
         try {
+          controlador = new AbortController();
+          clearTimeout(temporizador);
+          temporizador = setTimeout(() => controlador.abort(), cfg.mistralTimeoutMs);
           respuesta = await fetch(cfg.mistralUrl, {
             method: 'POST',
             headers: {
@@ -155,6 +183,10 @@ export function crearMistral(cfg) {
     } finally {
       clearTimeout(temporizador);
     }
+  }
+
+  async function generar(textoEntrada) {
+    return enCola(() => generarDirecto(textoEntrada));
   }
 
   async function probar() {
