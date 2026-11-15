@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
 
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
@@ -60,6 +61,27 @@ export class WhatsappService {
         // no existía
       }
     }
+  }
+
+  /**
+   * En Windows, si un Chrome viejo quedó usando el perfil (crash/Ctrl+C),
+   * el perfil queda bloqueado aunque borremos los locks. Lo cerramos.
+   */
+  async _matarNavegadoresZombie() {
+    if (process.platform !== 'win32') return;
+    await new Promise((resolve) => {
+      execFile(
+        'wmic',
+        ['process', 'where', "name='chrome.exe' and commandline like '%whatsapp-session%'", 'call', 'terminate'],
+        { timeout: 15000, windowsHide: true },
+        (err, stdout) => {
+          if (!err && /successful|terminated/i.test(String(stdout))) {
+            logger.warn('Whatsapp', 'Se cerraron navegadores viejos que aún usaban la sesión');
+          }
+          resolve();
+        }
+      );
+    });
   }
 
   /**
@@ -206,6 +228,17 @@ export class WhatsappService {
       return { ok: true, estado: this.estado, mensaje: 'Conexión en curso...' };
     }
 
+    // Si ya hay un navegador vivo esperando QR o autenticando, no lanzar otro:
+    // dos Chromium sobre el mismo perfil rompen la sesión ("already running").
+    if (
+      this.client &&
+      [ESTADOS.CONECTANDO, ESTADOS.ESPERANDO_QR, ESTADOS.AUTENTICANDO, ESTADOS.REINTENTANDO].includes(
+        this.estado
+      )
+    ) {
+      return { ok: true, estado: this.estado, mensaje: 'Esperando vinculación (QR/código)...' };
+    }
+
     try {
       return await this._conectar();
     } finally {
@@ -216,6 +249,7 @@ export class WhatsappService {
   async _conectar() {
     this._iniciando = true;
 
+    await this._matarNavegadoresZombie();
     await this._limpiarLocksSesion();
 
     const puppeteer = {
